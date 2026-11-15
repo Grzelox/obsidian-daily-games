@@ -1,0 +1,30 @@
+/**
+ * @fileoverview Bundles src/main.ts into main.js.
+ *
+ * `node esbuild.config.mjs` rebuilds on every change; add `production` for a
+ * single minified build without source maps.
+ */
+
+import esbuild from "esbuild";
+import { builtinModules } from "node:module";
+
+const prod = process.argv[2] === "production";
+
+const ctx = await esbuild.context({
+	entryPoints: ["src/main.ts"],
+	bundle: true,
+	external: ["obsidian", "electron", "@codemirror/*", "@lezer/*", ...builtinModules],
+	format: "cjs",
+	target: "es2020",
+	logLevel: "info",
+	sourcemap: prod ? false : "inline",
+	treeShaking: true,
+	minify: prod,
+	outfile: "main.js",
+});
+if (prod) {
+	await ctx.rebuild();
+	process.exit(0);
+} else {
+	await ctx.watch();
+}
