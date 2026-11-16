@@ -7,6 +7,7 @@
 
 import { setIcon } from "obsidian";
 import { parseKey } from "./dates";
+import { FALLBACK_COLOR, safeColor, safeImageUrl, safeWebUrl } from "./sanitize";
 import type { Game } from "./types";
 
 /** State and actions a board needs from its owner. */
@@ -155,6 +156,26 @@ function button(parent: HTMLElement, cls: string, label: string, iconName?: stri
 }
 
 /**
+ * Points a link at a URL that was already checked, or makes it a plain button-like link.
+ *
+ * Links never get an `href` that isn't `http:` or `https:`, so middle-clicks and
+ * other default navigation can't open anything else.
+ *
+ * @param anchor The link element.
+ * @param url A link from {@link safeWebUrl}, or an empty string.
+ */
+function linkTo(anchor: HTMLAnchorElement, url: string): void {
+	if (url) {
+		anchor.href = url;
+		anchor.rel = "noopener noreferrer";
+		anchor.target = "_blank";
+	} else {
+		anchor.setAttribute("role", "button");
+		anchor.tabIndex = 0;
+	}
+}
+
+/**
  * Returns the host name of a URL without a leading `www.`.
  *
  * @param url The URL to read.
@@ -173,6 +194,9 @@ export class GamesBoard {
 	/** Category picked with the chips, or `all`. */
 	private category: string;
 
+	/** Whether state changed while the board was hidden, so it needs a redraw once shown. */
+	stale = false;
+
 	/**
 	 * @param root The element the board draws into; its children are replaced.
 	 * @param host Where the board reads state from and sends actions to.
@@ -186,8 +210,18 @@ export class GamesBoard {
 		this.category = opts.category ?? "all";
 	}
 
+	/**
+	 * Tells whether the board is on screen, e.g. not in a background tab.
+	 *
+	 * @return True when the board's element is displayed.
+	 */
+	isShown(): boolean {
+		return this.root.isShown();
+	}
+
 	/** Redraws the whole board from the host's current state. */
 	render(): void {
+		this.stale = false;
 		this.root.replaceChildren();
 		const page = el("div", "dg-page" + (this.opts.compact ? " is-compact" : ""), this.root);
 		const { host } = this;
@@ -289,7 +323,7 @@ export class GamesBoard {
 		const bar = el("div", "dg-progress", parent);
 		for (const game of games) {
 			const segment = el("span", "dg-progress-seg" + (this.host.isPlayed(game.id) ? " is-done" : ""), bar);
-			segment.setCssProps({ "--dg-accent": game.color || "var(--interactive-accent)" });
+			segment.setCssProps({ "--dg-accent": safeColor(game.color, "var(--interactive-accent)") });
 			segment.title = game.name;
 		}
 	}
@@ -328,9 +362,10 @@ export class GamesBoard {
 	private renderCard(grid: HTMLElement, game: Game): void {
 		const { host } = this;
 		const played = host.isPlayed(game.id);
-		const hasUrl = !!game.url;
+		const url = safeWebUrl(game.url);
+		const hasUrl = !!url;
 		const card = el("article", "dg-card" + (played ? " is-played" : "") + (hasUrl ? "" : " is-unset"), grid);
-		card.setCssProps({ "--dg-accent": game.color || "#888888" });
+		card.setCssProps({ "--dg-accent": safeColor(game.color, FALLBACK_COLOR) });
 
 		// A game without a link opens its form instead, so the link can be added.
 		const open = (evt: MouseEvent) => {
@@ -340,14 +375,16 @@ export class GamesBoard {
 		};
 
 		const cover = el("a", "dg-cover", card);
-		cover.href = game.url || "#";
+		linkTo(cover, url);
 		cover.setAttribute("aria-label", hasUrl ? `Play ${game.name}` : `Add a link for ${game.name}`);
 		cover.onclick = open;
-		if (game.image) {
+		const image = safeImageUrl(game.image);
+		if (image) {
 			const img = el("img", "dg-cover-img", cover);
-			img.src = game.image;
-			img.alt = "";
+			img.referrerPolicy = "no-referrer";
 			img.loading = "lazy";
+			img.alt = "";
+			img.src = image;
 		} else {
 			el("span", "dg-emoji", cover, game.emoji || game.name.charAt(0).toUpperCase());
 		}
@@ -370,10 +407,10 @@ export class GamesBoard {
 
 		const name = el("h3", "dg-name", body);
 		const link = el("a", "", name, game.name);
-		link.href = game.url || "#";
+		linkTo(link, url);
 		link.onclick = open;
 		if (game.blurb) el("p", "dg-blurb", body, game.blurb);
-		const domain = domainOf(game.url);
+		const domain = domainOf(url);
 		if (domain) el("div", "dg-domain", body, domain);
 
 		const result = host.result(game.id);

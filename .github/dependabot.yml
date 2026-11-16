@@ -1,0 +1,20 @@
+# Weekly update PRs for dependencies and pinned GitHub Actions.
+# The cooldown matches pnpm's minimumReleaseAge: nothing newer than 7 days is proposed.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dev-dependencies:
+        dependency-type: development
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

@@ -4,11 +4,13 @@
 
 import { ItemView, MarkdownRenderChild, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { GamesBoard, type BoardHost, type BoardOptions } from "./board";
-import { appendResult, resultBlock } from "./dailyNote";
-import { addDays, dayKey, parseKey, streak } from "./dates";
+import { appendToDailyNote } from "./dailyNote";
+import { addDays, computeStreaks, dayKey, parseKey, type Streaks } from "./dates";
+import { resultBlock } from "./markdown";
 import { GameModal, ResultModal } from "./modals";
+import { isGameId, safeWebUrl, sanitizeData } from "./sanitize";
 import { DailyGamesSettingTab } from "./settings";
-import { blankGame, DEFAULT_GAMES, DEFAULT_SETTINGS, newGameId, type Game, type PluginData } from "./types";
+import { blankGame, newGameId, type Game, type PluginData } from "./types";
 
 /** View type of the board tab. */
 const VIEW_TYPE = "daily-games-view";
@@ -16,8 +18,11 @@ const VIEW_TYPE = "daily-games-view";
 /** View type registered by the Web viewer core plugin. */
 const WEB_VIEWER = "webviewer";
 
-/** Days of play history and results kept in the data file. */
-const KEEP_DAYS = 400;
+/** Days of play history kept in the data file; also the longest streak that can be counted. */
+const KEEP_PLAY_DAYS = 1100;
+
+/** Days of pasted results kept in the data file; results also live in the daily notes. */
+const KEEP_RESULT_DAYS = 400;
 
 /** How often to check whether a new game day has started, in milliseconds. */
 const DAY_CHECK_MS = 60_000;
@@ -27,14 +32,23 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 	/** Everything saved to the data file. */
 	state!: PluginData;
 
-	/** Boards currently on screen, redrawn whenever state changes. */
+	/** Boards currently open, redrawn whenever state changes. */
 	private boards = new Set<GamesBoard>();
 
 	/** Game day the boards were last drawn for. */
 	private lastDay = "";
 
-	/** Whether the user was already told that Web viewer is off. */
-	private warnedNoViewer = false;
+	/** Streaks for {@link lastDay}, shared by all boards until state changes. */
+	private streaks: (Streaks & { day: string }) | null = null;
+
+	/** Pending writes of the data file, run one after another so they never overlap. */
+	private saveQueue: Promise<void> = Promise.resolve();
+
+	/** Web viewer tab each game last opened in, reused when the game is opened again. */
+	private gameLeaves = new Map<string, WorkspaceLeaf>();
+
+	/** Whether Web viewer turned out to be off; avoids flashing an empty tab on every click. */
+	private webViewerMissing = false;
 
 	/** Loads state and registers the view, commands, code block and settings tab. */
 	async onload(): Promise<void> {
@@ -51,6 +65,10 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 
 		this.addSettingTab(new DailyGamesSettingTab(this.app, this));
 
+		// Boards in background tabs skip redraws; catch them up when they come into view.
+		this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.renderStale()));
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.renderStale()));
+
 		// Roll the boards over to a fresh day without a reload.
 		this.lastDay = this.today();
 		this.registerInterval(
@@ -64,43 +82,63 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 		);
 	}
 
-	/** Forgets the boards; Obsidian removes the views and code blocks itself. */
+	/** Forgets the boards and tabs; Obsidian removes the views and code blocks itself. */
 	onunload(): void {
 		this.boards.clear();
+		this.gameLeaves.clear();
 	}
 
 	/**
 	 * Reloads state when the data file changes outside Obsidian, e.g. through sync.
+	 *
+	 * A file that can't be read leaves the current state in place.
 	 */
 	async onExternalSettingsChange(): Promise<void> {
-		await this.loadState();
-		this.refresh();
+		try {
+			await this.loadState();
+			this.refresh();
+		} catch (e) {
+			console.error("Daily games: could not reload the data file", e);
+		}
 	}
 
 	/**
-	 * Loads the data file, fills in defaults and drops history older than {@link KEEP_DAYS}.
+	 * Loads and validates the data file, then drops history past the retention limits.
+	 *
+	 * A missing or unreadable file gives the default state.
 	 */
 	private async loadState(): Promise<void> {
-		const raw = ((await this.loadData()) ?? {}) as Partial<PluginData>;
-		this.state = {
-			settings: {
-				...DEFAULT_SETTINGS,
-				...raw.settings,
-				games: (raw.settings?.games ?? DEFAULT_GAMES).map((g) => ({ ...g })),
-			},
-			plays: raw.plays ?? {},
-			results: raw.results ?? {},
-			unplayedOnly: raw.unplayedOnly ?? false,
-		};
-		const cutoff = addDays(this.today(), -KEEP_DAYS);
-		for (const day of Object.keys(this.state.plays)) if (day < cutoff) delete this.state.plays[day];
-		for (const day of Object.keys(this.state.results)) if (day < cutoff) delete this.state.results[day];
+		let raw: unknown = null;
+		try {
+			raw = await this.loadData();
+		} catch (e) {
+			console.error("Daily games: could not read the data file; starting from defaults", e);
+		}
+		const state = sanitizeData(raw);
+		const today = dayKey(new Date(), state.settings.dayStartsAt);
+		const playCutoff = addDays(today, -KEEP_PLAY_DAYS);
+		const resultCutoff = addDays(today, -KEEP_RESULT_DAYS);
+		for (const day of Object.keys(state.plays)) if (day < playCutoff) delete state.plays[day];
+		for (const day of Object.keys(state.results)) if (day < resultCutoff) delete state.results[day];
+		this.state = state;
+		this.streaks = null;
 	}
 
-	/** Saves state to the data file and redraws every board. */
+	/**
+	 * Redraws every board, then saves state to the data file.
+	 *
+	 * The redraw comes first so clicks feel instant; writes are queued so two
+	 * quick changes never write the file at the same time.
+	 */
 	async saveAndRefresh(): Promise<void> {
-		await this.saveData(this.state);
 		this.refresh();
+		this.saveQueue = this.saveQueue
+			.then(() => this.saveData(this.state))
+			.catch((e) => {
+				console.error("Daily games: could not save", e);
+				new Notice("Daily games couldn't save your changes. See the console.");
+			});
+		await this.saveQueue;
 	}
 
 	/**
@@ -122,9 +160,18 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 		this.boards.delete(board);
 	}
 
-	/** Redraws every board on screen. */
+	/** Recomputes streaks and redraws every visible board; hidden boards are marked stale. */
 	refresh(): void {
-		for (const board of this.boards) board.render();
+		this.streaks = null;
+		for (const board of this.boards) {
+			if (board.isShown()) board.render();
+			else board.stale = true;
+		}
+	}
+
+	/** Redraws boards that missed an update while hidden and are visible now. */
+	private renderStale(): void {
+		for (const board of this.boards) if (board.stale && board.isShown()) board.render();
 	}
 
 	/** @inheritDoc */
@@ -163,14 +210,25 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 		return this.state.results[this.today()]?.[id];
 	}
 
+	/**
+	 * Returns today's streaks, computing them once per change for all boards.
+	 *
+	 * @return The cached streaks.
+	 */
+	private currentStreaks(): Streaks {
+		const today = this.today();
+		if (this.streaks?.day !== today) this.streaks = { day: today, ...computeStreaks(today, this.state.plays) };
+		return this.streaks;
+	}
+
 	/** @inheritDoc */
 	gameStreak(id: string): number {
-		return streak(this.today(), (day) => this.isPlayed(id, day));
+		return this.currentStreaks().perGame.get(id) ?? 0;
 	}
 
 	/** @inheritDoc */
 	dayStreak(): number {
-		return streak(this.today(), (day) => (this.state.plays[day]?.length ?? 0) > 0);
+		return this.currentStreaks().anyGame;
 	}
 
 	/** @inheritDoc */
@@ -183,10 +241,11 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 	 * Marks a game played or unplayed on a day, without saving.
 	 *
 	 * @param day The day key.
-	 * @param id The game's ID.
+	 * @param id The game's ID; malformed IDs are ignored.
 	 * @param played The new state.
 	 */
 	private markPlayed(day: string, id: string, played: boolean): void {
+		if (!isGameId(id)) return;
 		const ids = new Set(this.state.plays[day] ?? []);
 		if (played) ids.add(id);
 		else ids.delete(id);
@@ -203,43 +262,55 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 	/**
 	 * Opens a game in Web viewer or the browser, and marks it played if set to.
 	 *
-	 * A game without a link opens its form instead, so the link can be added.
+	 * Only `http:` and `https:` links are opened; a game without one opens its
+	 * form instead, so a link can be added.
 	 *
 	 * @param game The game to open.
 	 * @param evt The click that opened it, if any; Cmd/Ctrl swaps where it opens.
 	 */
 	async openGame(game: Game, evt?: MouseEvent): Promise<void> {
-		if (!game.url) {
+		const url = safeWebUrl(game.url);
+		if (!url) {
 			this.editGame(game);
 			return;
 		}
 		const swap = !!evt && (evt.metaKey || evt.ctrlKey);
 		const wantViewer = (this.state.settings.openIn === "webviewer") !== swap;
-		if (!(wantViewer && (await this.openInWebViewer(game.url)))) {
-			window.open(game.url, "_blank");
+		if (!(wantViewer && (await this.openInWebViewer(game.id, url)))) {
+			window.open(url, "_blank", "noopener,noreferrer");
 		}
 		if (this.state.settings.markPlayedOnOpen && !this.isPlayed(game.id)) await this.setPlayed(game.id, true);
 	}
 
 	/**
-	 * Opens a URL in a Web viewer tab.
+	 * Opens a URL in a Web viewer tab, reusing the tab the game last opened in.
 	 *
-	 * When the Web viewer core plugin is off, its view type doesn't exist and the
-	 * tab opens as another view; the tab is then closed and the user told once.
+	 * When the Web viewer core plugin is off its view type doesn't exist and the
+	 * tab opens as another view; the tab is closed, the user told, and later
+	 * clicks go straight to the browser until a Web viewer tab exists again.
 	 *
+	 * @param gameId The game being opened.
 	 * @param url The page to open.
 	 * @return True when the page opened in Web viewer.
 	 */
-	private async openInWebViewer(url: string): Promise<boolean> {
-		const leaf = this.app.workspace.getLeaf("tab");
+	private async openInWebViewer(gameId: string, url: string): Promise<boolean> {
+		const { workspace } = this.app;
+		const viewerLeaves = workspace.getLeavesOfType(WEB_VIEWER);
+		if (this.webViewerMissing && viewerLeaves.length === 0) return false;
+
+		const previous = this.gameLeaves.get(gameId);
+		const leaf = previous && viewerLeaves.includes(previous) ? previous : workspace.getLeaf("tab");
 		await leaf.setViewState({ type: WEB_VIEWER, active: true, state: { url, navigate: true } });
-		if (leaf.view.getViewType() === WEB_VIEWER) return true;
-		leaf.detach();
-		if (!this.warnedNoViewer) {
-			this.warnedNoViewer = true;
+		if (leaf.view.getViewType() !== WEB_VIEWER) {
+			leaf.detach();
+			this.webViewerMissing = true;
 			new Notice("Web viewer is turned off, so games open in your browser.");
+			return false;
 		}
-		return false;
+		this.webViewerMissing = false;
+		this.gameLeaves.set(gameId, leaf);
+		await workspace.revealLeaf(leaf);
+		return true;
 	}
 
 	/** @inheritDoc */
@@ -300,7 +371,7 @@ export default class DailyGamesPlugin extends Plugin implements BoardHost {
 	 */
 	private async addResultToDailyNote(day: string, game: Game, text: string): Promise<void> {
 		try {
-			const written = await appendResult(
+			const written = await appendToDailyNote(
 				this.app.vault,
 				parseKey(day),
 				this.state.settings.dailyNoteHeading,

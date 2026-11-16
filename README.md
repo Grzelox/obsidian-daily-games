@@ -42,9 +42,13 @@ When you save the first result for a game today, it's added to today's daily not
 ## Daily games
 
 > [!success] 🎬 Spotle Movies
+> ```text
 > Spotle Movies #142
 > 🟨🟥🟩🟩 4/10
+> ```
 ```
+
+The result is written as plain text in a code block, so nothing pasted from a web page can turn into a link, an embed or a script in your note.
 
 This needs the **Daily notes** core plugin. If today's note doesn't exist yet, it's created from your daily note template. You can turn this off or change the heading in settings.
 
@@ -59,9 +63,13 @@ This needs the **Daily notes** core plugin. If today's note doesn't exist yet, i
 | Add results to the daily note | On |
 | Daily note heading | `## Daily games` |
 
-## Privacy
+## Privacy and security
 
-The plugin makes no network requests of its own. Game pages load only when you open them, in Obsidian's Web viewer or your browser. Cover images, if you set any, load from the links you give. Play history and results stay in the plugin's data file in your vault.
+- The plugin makes no network requests of its own. Game pages load only when you open them, in Obsidian's Web viewer or your browser.
+- Cover images, if you set any, load from the `https://` links you give, without sending a referrer.
+- Play history and results stay in the plugin's data file in your vault.
+- Only `http://` and `https://` game links are accepted, so a link can't run code or open local files. Colours must be hex values.
+- The data file is validated every time it loads, including when it changes through sync, so a corrupt or tampered file falls back to defaults instead of breaking the plugin.
 
 ## Installation
 
@@ -71,13 +79,24 @@ Manually: download `main.js`, `manifest.json` and `styles.css` from the [latest 
 
 ## Development
 
+Uses [pnpm](https://pnpm.io) (version in `package.json`'s `packageManager`) and Node 22+.
+
 ```bash
-npm install
-npm run dev        # rebuild on change
-npm run build      # type-check and production build
-npm run lint       # Obsidian's ESLint rules
-npm run install-plugin -- "/path/to/vault"   # copy the build into a vault
+pnpm install
+pnpm dev           # rebuild on change
+pnpm build         # type-check and production build
+pnpm lint          # Obsidian's ESLint rules
+pnpm test          # unit tests
+pnpm install-plugin "/path/to/vault"   # copy the build into a vault
 ```
+
+Dependency hardening lives in `pnpm-workspace.yaml`:
+- Only versions published at least 7 days ago are installed.
+- Git and tarball dependencies of dependencies are refused.
+- Install scripts are blocked unless listed.
+- Installs fail when a package's trust evidence gets weaker than in earlier versions.
+
+Dependabot proposes updates weekly with the same 7-day cooldown.
 
 ### Releasing
 
@@ -86,7 +105,11 @@ npm version patch   # bumps package.json, manifest.json and versions.json, and t
 git push --follow-tags
 ```
 
-The GitHub Actions workflow builds the tag and publishes a release with `main.js`, `manifest.json` and `styles.css`.
+The release workflow audits, lints, tests and builds the tag, then publishes `main.js`, `manifest.json` and `styles.css` with a signed [build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations). To check a downloaded file was built from this repository:
+
+```bash
+gh attestation verify main.js --repo Grzelox/obsidian-daily-games
+```
 
 ## License
 

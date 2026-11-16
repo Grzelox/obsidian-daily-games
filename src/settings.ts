@@ -2,12 +2,16 @@
  * @fileoverview The plugin's settings tab: options and the list of games.
  */
 
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, debounce } from "obsidian";
 import type DailyGamesPlugin from "./main";
-import type { Game, OpenIn } from "./types";
+import { LIMITS, singleLine } from "./sanitize";
+import { DEFAULT_SETTINGS, type Game, type OpenIn } from "./types";
 
 /** Settings tab with the plugin's options and a reorderable list of games. */
 export class DailyGamesSettingTab extends PluginSettingTab {
+	/** Saves typed text after a pause, so typing doesn't write the data file on every key. */
+	private readonly saveSoon = debounce(() => void this.plugin.saveAndRefresh(), 500, true);
+
 	/**
 	 * @param app The Obsidian app.
 	 * @param plugin The plugin whose settings the tab edits.
@@ -19,19 +23,25 @@ export class DailyGamesSettingTab extends PluginSettingTab {
 		super(app, plugin);
 	}
 
-	/** Draws the tab. Every change is saved right away and redraws the boards. */
+	/**
+	 * Draws the tab, keeping the scroll position when it redraws.
+	 *
+	 * Toggles and dropdowns save right away; text fields save after a pause.
+	 */
 	display(): void {
 		const { containerEl, plugin } = this;
 		const settings = plugin.state.settings;
 		const save = () => plugin.saveAndRefresh();
+		const scrollTop = containerEl.scrollTop;
 		containerEl.empty();
 
-		new Setting(containerEl).setName("Title").addText((t) =>
-			t.setValue(settings.title).onChange(async (v) => {
-				settings.title = v || "Daily Games";
-				await save();
-			}),
-		);
+		new Setting(containerEl).setName("Title").addText((t) => {
+			t.inputEl.maxLength = LIMITS.title;
+			t.setValue(settings.title).onChange((v) => {
+				settings.title = singleLine(v, LIMITS.title, DEFAULT_SETTINGS.title);
+				this.saveSoon();
+			});
+		});
 
 		new Setting(containerEl)
 			.setName("Open games in")
@@ -78,12 +88,17 @@ export class DailyGamesSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		new Setting(containerEl).setName("Daily note heading").addText((t) =>
-			t.setValue(settings.dailyNoteHeading).onChange(async (v) => {
-				settings.dailyNoteHeading = v.trim() || "## Daily games";
-				await save();
-			}),
-		);
+		new Setting(containerEl)
+			.setName("Daily note heading")
+			.setDesc("A Markdown heading such as ## Daily games.")
+			.addText((t) => {
+				t.inputEl.maxLength = LIMITS.heading;
+				t.setValue(settings.dailyNoteHeading).onChange((v) => {
+					const heading = singleLine(v, LIMITS.heading);
+					settings.dailyNoteHeading = /^#{1,6} \S/.test(heading) ? heading : DEFAULT_SETTINGS.dailyNoteHeading;
+					this.saveSoon();
+				});
+			});
 
 		new Setting(containerEl)
 			.setName("Games")
@@ -96,6 +111,12 @@ export class DailyGamesSettingTab extends PluginSettingTab {
 			);
 
 		settings.games.forEach((game, i) => this.renderGameRow(game, i));
+		containerEl.scrollTop = scrollTop;
+	}
+
+	/** Saves any text still waiting for its pause when the tab closes. */
+	hide(): void {
+		this.saveSoon.run();
 	}
 
 	/**

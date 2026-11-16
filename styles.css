@@ -294,8 +294,8 @@
 	left: 10px;
 	padding: 3px 9px;
 	border-radius: var(--dg-pill);
-	background: rgb(18 18 28 / 0.55);
-	backdrop-filter: blur(6px);
+	/* Solid enough to read on any cover without a backdrop blur, which costs a layer per card. */
+	background: rgb(18 18 28 / 0.72);
 	color: #fff;
 	font: 700 0.62em/1.4 var(--font-monospace, var(--dg-sans));
 	letter-spacing: 0.14em;

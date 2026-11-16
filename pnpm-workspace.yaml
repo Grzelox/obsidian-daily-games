@@ -1,0 +1,26 @@
+# pnpm settings, mostly supply-chain hardening. See https://pnpm.io/settings
+
+# Install only versions published at least 7 days ago (value in minutes), so a
+# hijacked release has time to be caught and pulled before it reaches us.
+minimumReleaseAge: 10080
+
+# Refuse git and tarball URLs as dependencies of dependencies.
+blockExoticSubdeps: true
+
+# Fail when a package's trust evidence (e.g. npm provenance) is weaker than in earlier versions.
+trustPolicy: no-downgrade
+
+# Fail the install when a dependency has an install script that isn't listed below.
+strictDepBuilds: true
+allowBuilds:
+  # esbuild's install script only checks its binary; it works without it.
+  esbuild: false
+
+# Write exact versions to package.json.
+saveExact: true
+
+overrides:
+  # obsidian-daily-notes-interface asks for obsidian from GitHub master; use the npm release.
+  obsidian: 1.14.4
+  # Dev-only (eslint): versions 7 to 11.0.0 have a DoS advisory (GHSA-g3hv-75wg-m249).
+  "minimatch@>=7.0.0 <11.0.1": 11.0.5
