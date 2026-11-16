@@ -32,7 +32,7 @@ Options, one per line inside the block:
 | `compact: true` | A one-line header instead of the large masthead. |
 | `category: Trivia` | Show only one category. |
 
-Add, edit, reorder and remove games in **Settings → Daily Games**, or with **Add game** on the board.
+Add, edit, reorder (drag) and remove games in **Settings → Daily Games**, or with **Add game** on the board. All settings show up in Obsidian's settings search.
 
 ### Results in your daily note
 
@@ -72,6 +72,8 @@ This needs the **Daily notes** core plugin. If today's note doesn't exist yet, i
 - The data file is validated every time it loads, including when it changes through sync, so a corrupt or tampered file falls back to defaults instead of breaking the plugin.
 
 ## Installation
+
+Requires Obsidian 1.13 or later (version 1.0.0 still installs on Obsidian 1.8 to 1.12).
 
 From Obsidian: **Settings → Community plugins → Browse**, search for "Daily Games", then install and enable it.
 

@@ -61,7 +61,7 @@ export class ResultModal extends Modal {
 			row.addButton((b) =>
 				b
 					.setButtonText("Clear")
-					.setWarning()
+					.setDestructive()
 					.onClick(() => {
 						void this.onSave("");
 						this.close();
