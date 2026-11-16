@@ -1,9 +1,10 @@
 {
-  "id": "daily-games",
-  "name": "Daily Games",
-  "version": "1.0.0",
-  "minAppVersion": "1.8.0",
-  "description": "A front page for your daily games: open them, track what you've played today, paste results and keep streaks.",
-  "author": "grzelo",
-  "isDesktopOnly": false
+	"id": "daily-games",
+	"name": "Daily Games",
+	"version": "1.1.0",
+	"minAppVersion": "1.13.0",
+	"description": "A front page for your daily games: open them, track what you've played today, paste results and keep streaks.",
+	"author": "grzelo",
+	"isDesktopOnly": false,
+	"authorUrl": "https://github.com/Grzelox"
 }

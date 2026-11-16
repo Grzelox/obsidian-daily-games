@@ -136,6 +136,16 @@ export function safeColor(value: unknown, fallback = FALLBACK_COLOR): string {
 }
 
 /**
+ * Tells whether text is a Markdown heading line such as `## Daily games`.
+ *
+ * @param value The text to check.
+ * @return True for one to six `#`, a space, then text.
+ */
+export function isMarkdownHeading(value: string): boolean {
+	return MARKDOWN_HEADING.test(value);
+}
+
+/**
  * Tells whether a value is a well-formed game ID.
  *
  * IDs are lowercase slugs, which also rules out keys like `__proto__`.
@@ -206,7 +216,7 @@ function sanitizeSettings(raw: unknown): Settings {
 				? (s.dayStartsAt as number)
 				: DEFAULT_SETTINGS.dayStartsAt,
 		logToDailyNote: typeof s.logToDailyNote === "boolean" ? s.logToDailyNote : DEFAULT_SETTINGS.logToDailyNote,
-		dailyNoteHeading: MARKDOWN_HEADING.test(heading) ? heading : DEFAULT_SETTINGS.dailyNoteHeading,
+		dailyNoteHeading: isMarkdownHeading(heading) ? heading : DEFAULT_SETTINGS.dailyNoteHeading,
 	};
 }
 
